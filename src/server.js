@@ -8,6 +8,7 @@ const cfg           = require('./config');
 const { uniqueSubdomain }              = require('./subdomains');
 const { RateLimiter }                  = require('./rate-limit');
 const { noTunnelPage, rateLimitPage, timeoutPage, bodyTooLargePage } = require('./pages');
+const db            = require('./db');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 // subdomain → WebSocket (CLI connection)
@@ -55,15 +56,24 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
+  // Resolve which dashboard account (if any) owns this tunnel — a personal
+  // token issued from the expose127 dashboard, unrelated to VALID_TOKENS above.
+  // No token, or a token that doesn't match anyone, just means "anonymous" —
+  // the tunnel still works, it just won't show up in anyone's dashboard.
+  const owner    = db.findClientByToken(token);
+  const clientId = owner ? owner.client_id : null;
+
   // ── 3. Assign subdomain ───────────────────────────────────────────────────
   const requested = url.searchParams.get('subdomain') || null;
   const subdomain = uniqueSubdomain(tunnels, requested);
 
   ws.subdomain       = subdomain;
+  ws.clientId        = clientId;
   ws.pendingRequests = new Map(); // requestId → { resolve, reject }
   ws.connectedAt     = Date.now();
 
   tunnels.set(subdomain, ws);
+  if (clientId) db.markTunnelConnected(subdomain, clientId);
   log('info', `[+] ${subdomain}.${cfg.BASE_DOMAIN}  (total: ${tunnels.size})`);
 
   // ── 4. Tell CLI its public URL ────────────────────────────────────────────
@@ -99,6 +109,7 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     clearInterval(pingInterval);
     tunnels.delete(subdomain);
+    if (clientId) db.markTunnelClosed(subdomain);
 
     // Reject any requests still waiting on this tunnel
     for (const [, pending] of ws.pendingRequests) {
@@ -235,6 +246,17 @@ const httpServer = http.createServer(async (req, res) => {
     res.end();
   }
 
+  if (tunnelWs.clientId) {
+    db.logRequest({
+      clientId:   tunnelWs.clientId,
+      subdomain,
+      method:     req.method,
+      path:       req.url,
+      statusCode: tunnelResponse.statusCode || 200,
+      durationMs: tunnelResponse.durationMs || 0,
+    });
+  }
+
   log('info', `${req.method} ${tunnelResponse.statusCode} ${subdomain} ${req.url}`);
 });
 
@@ -243,6 +265,11 @@ httpServer.listen(cfg.HTTP_PORT, () => {
   log('info', `Tunnels served as https://<subdomain>.${cfg.BASE_DOMAIN}`);
   log('info', `Max tunnels: ${cfg.MAX_TUNNELS}  |  Rate limit: ${cfg.RATE_LIMIT_RPM} rpm  |  Auth: ${cfg.VALID_TOKENS.length > 0 ? 'enabled' : 'open'}`);
 });
+
+// ── Request-log retention ──────────────────────────────────────────────────────
+setInterval(() => {
+  db.pruneOldRequests(cfg.LOG_RETENTION_DAYS);
+}, 60 * 60 * 1000).unref();
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 function shutdown(signal) {

@@ -13,4 +13,10 @@ module.exports = {
   VALID_TOKENS: process.env.VALID_TOKENS
     ? process.env.VALID_TOKENS.split(',').map(t => t.trim()).filter(Boolean)
     : [],
+
+  // Shared SQLite file (also read/written by the expose127 dashboard app)
+  DB_PATH: process.env.DB_PATH || require('path').join(__dirname, '..', 'data', 'expose127.db'),
+
+  // How long to keep request log rows before pruning (days)
+  LOG_RETENTION_DAYS: parseInt(process.env.LOG_RETENTION_DAYS || '7'),
 };
