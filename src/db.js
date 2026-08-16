@@ -47,10 +47,17 @@ db.exec(`
 // Migration for tokens tables created before revoked_at existed (CREATE TABLE
 // IF NOT EXISTS above only applies to brand-new databases — this file and the
 // expose127 dashboard share the same DB, and whichever process starts first
-// creates the table).
+// creates the table). Both processes can hit this check concurrently on a
+// fresh DB — check-then-ALTER isn't atomic across processes, so a "duplicate
+// column" error here just means the other process won the race; anything
+// else is a real problem and should still surface.
 const tokenColumns = db.prepare("PRAGMA table_info(tokens)").all().map(c => c.name);
 if (!tokenColumns.includes('revoked_at')) {
-  db.exec('ALTER TABLE tokens ADD COLUMN revoked_at INTEGER');
+  try {
+    db.exec('ALTER TABLE tokens ADD COLUMN revoked_at INTEGER');
+  } catch (err) {
+    if (!/duplicate column name/i.test(err.message)) throw err;
+  }
 }
 
 const stmts = {
