@@ -19,7 +19,8 @@ db.exec(`
     token      TEXT PRIMARY KEY,
     client_id  INTEGER NOT NULL,
     email      TEXT,
-    created_at INTEGER
+    created_at INTEGER,
+    revoked_at INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS tunnels (
@@ -43,8 +44,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_requests_client ON requests(client_id, ts DESC);
 `);
 
+// Migration for tokens tables created before revoked_at existed (CREATE TABLE
+// IF NOT EXISTS above only applies to brand-new databases — this file and the
+// expose127 dashboard share the same DB, and whichever process starts first
+// creates the table).
+const tokenColumns = db.prepare("PRAGMA table_info(tokens)").all().map(c => c.name);
+if (!tokenColumns.includes('revoked_at')) {
+  db.exec('ALTER TABLE tokens ADD COLUMN revoked_at INTEGER');
+}
+
 const stmts = {
-  findToken:      db.prepare('SELECT client_id, email FROM tokens WHERE token = ?'),
+  // Revoked tokens (soft-deleted from the expose127 dashboard) are treated
+  // the same as a token that never existed — the tunnel still connects, it
+  // just won't be attributed to that client's account. See findClientByToken.
+  findToken:      db.prepare('SELECT client_id, email FROM tokens WHERE token = ? AND revoked_at IS NULL'),
   insertToken:    db.prepare('INSERT INTO tokens (token, client_id, email, created_at) VALUES (?, ?, ?, ?)'),
 
   upsertTunnel:   db.prepare(`
