@@ -135,7 +135,10 @@ const httpServer = http.createServer(async (req, res) => {
 
   // ── Health check (no subdomain routing needed) ───────────────────────────
   if (subdomain === 'tunnel' && req.url === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' });
+    // 'status: ok' as a real header, not just in the JSON body — lets an
+    // uptime monitor's "custom response header" check work directly instead
+    // of needing to parse the response body.
+    res.writeHead(200, { 'content-type': 'application/json', status: 'ok' });
     res.end(JSON.stringify({
       status:        'ok',
       activeTunnels: tunnels.size,
