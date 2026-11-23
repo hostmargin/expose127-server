@@ -8,6 +8,7 @@ const cfg           = require('./config');
 const { uniqueSubdomain }              = require('./subdomains');
 const { RateLimiter }                  = require('./rate-limit');
 const { noTunnelPage, rateLimitPage, timeoutPage, bodyTooLargePage } = require('./pages');
+const { landingPage } = require('./landing');
 const db            = require('./db');
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -144,6 +145,20 @@ const httpServer = http.createServer(async (req, res) => {
       activeTunnels: tunnels.size,
       uptime:        Math.floor(process.uptime()),
     }));
+    return;
+  }
+
+  // ── Landing page on the bare domain (hmrg.xyz / www.hmrg.xyz) ────────────
+  // Without this, "hmrg.xyz" is parsed as a tunnel named "hmrg" → 502 page.
+  const hostname = host.split(':')[0].toLowerCase();
+  const base     = cfg.BASE_DOMAIN.toLowerCase();
+  if (hostname === base || hostname === `www.${base}`) {
+    const html = landingPage({ activeTunnels: tunnels.size });
+    res.writeHead(200, {
+      'content-type':  'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=60',
+    });
+    res.end(req.method === 'HEAD' ? undefined : html);
     return;
   }
 
